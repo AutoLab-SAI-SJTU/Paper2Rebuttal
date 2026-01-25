@@ -666,6 +666,8 @@ def resume_session(session_id_to_resume, provider_choice, api_key):
         
         session = rebuttal_service.get_session(session_id_to_resume)
         if not session:
+            session = rebuttal_service.restore_session_from_disk(session_id_to_resume)
+        if not session:
             return (
                 gr.update(),
                 gr.update(),

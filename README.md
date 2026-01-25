@@ -129,7 +129,7 @@ If your browser page is accidentally refreshed during processing, you can resume
 2. Click **🔄 Refresh List** to see active sessions
 3. Select your session from the dropdown
 4. Click **▶️ Resume Selected Session**
-> ⚠️ Note: This only works if the server is still running. Server restart will clear all session data.
+> ⚠️ Note: If the server restarts, the app will attempt to restore sessions from `gradio_uploads`. This is best-effort and depends on saved logs/summaries, so some in-memory progress may be missing.
 
 
 ### Workflow

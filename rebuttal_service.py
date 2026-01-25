@@ -715,6 +715,297 @@ class RebuttalService:
     def __init__(self):
         self.sessions: Dict[str, SessionState] = {}
         self._lock = threading.Lock()
+
+    def _read_text_safe(self, file_path: str) -> str:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except UnicodeDecodeError:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except Exception:
+            return ""
+
+    def _load_json_safe(self, file_path: str) -> Optional[Dict]:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _resolve_existing_path(self, candidates: List[Optional[str]]) -> str:
+        for path in candidates:
+            if path and os.path.exists(path):
+                return path
+        return ""
+
+    def _parse_questions_from_logs(self, logs_dir: str) -> List[str]:
+        for filename in ("agent2_checker_output.txt", "agent2_output.txt"):
+            path = os.path.join(logs_dir, filename)
+            if os.path.exists(path):
+                text = self._read_text_safe(path)
+                if text:
+                    questions, _ = extract_review_questions(text)
+                    if questions:
+                        return questions
+        return []
+
+    def _collect_question_ids_from_logs(self, logs_dir: str) -> List[int]:
+        qids = set()
+        if not os.path.isdir(logs_dir):
+            return []
+        for fname in os.listdir(logs_dir):
+            m = re.match(r"agent(?:3|4|6|7)_q(\d+)_", fname)
+            if m:
+                qids.add(int(m.group(1)))
+                continue
+            m = re.match(r"agent7_hitl_q(\d+)_r", fname)
+            if m:
+                qids.add(int(m.group(1)))
+                continue
+            m = re.match(r"interaction_q(\d+)\.json", fname)
+            if m:
+                qids.add(int(m.group(1)))
+        return sorted(qids)
+
+    def _find_latest_agent7_output(self, logs_dir: str, question_id: int) -> Tuple[str, int]:
+        latest_text = ""
+        max_rev = 0
+        if not os.path.isdir(logs_dir):
+            return "", 0
+        for fname in os.listdir(logs_dir):
+            m = re.match(rf"agent7_hitl_q{question_id}_r(\d+)_output\.txt", fname)
+            if m:
+                rev = int(m.group(1))
+                if rev >= max_rev:
+                    max_rev = rev
+                    latest_text = self._read_text_safe(os.path.join(logs_dir, fname))
+        if latest_text:
+            return latest_text, max_rev
+        base_path = os.path.join(logs_dir, f"agent7_q{question_id}_output.txt")
+        if os.path.exists(base_path):
+            return self._read_text_safe(base_path), 0
+        return "", max_rev
+
+    def _extract_hitl_feedback(self, text: str) -> str:
+        marker = "[human's feedback]"
+        idx = text.lower().find(marker)
+        if idx == -1:
+            return ""
+        tail = text[idx + len(marker):]
+        lines = tail.splitlines()
+        cleaned = []
+        for line in lines:
+            if "Please incorporate" in line:
+                break
+            if line.strip().startswith("```"):
+                continue
+            cleaned.append(line)
+        feedback = "\n".join(cleaned).strip()
+        return feedback
+
+    def _load_hitl_feedback_history(self, logs_dir: str, question_id: int) -> Tuple[List[Dict], int]:
+        history = []
+        max_rev = 0
+        if not os.path.isdir(logs_dir):
+            return history, max_rev
+        for fname in os.listdir(logs_dir):
+            m = re.match(rf"agent7_hitl_q{question_id}_r(\d+)_input\.txt", fname)
+            if not m:
+                continue
+            rev = int(m.group(1))
+            path = os.path.join(logs_dir, fname)
+            text = self._read_text_safe(path)
+            feedback = self._extract_hitl_feedback(text)
+            if not feedback:
+                continue
+            try:
+                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(path)))
+            except Exception:
+                ts = ""
+            history.append({"feedback": feedback, "timestamp": ts, "_rev": rev})
+            max_rev = max(max_rev, rev)
+        history.sort(key=lambda x: x.get("_rev", 0))
+        for item in history:
+            item.pop("_rev", None)
+        return history, max_rev
+
+    def _load_interaction_history(self, logs_dir: str, question_id: int) -> Tuple[List[Dict], int]:
+        path = os.path.join(logs_dir, f"interaction_q{question_id}.json")
+        if not os.path.exists(path):
+            return [], 0
+        data = self._load_json_safe(path) or {}
+        interactions = data.get("interactions", [])
+        history = []
+        max_rev = 0
+        for item in interactions:
+            feedback = item.get("user_feedback") or item.get("feedback") or ""
+            timestamp = item.get("timestamp", "")
+            if feedback:
+                entry = {"feedback": feedback, "timestamp": timestamp}
+                rev = item.get("revision_number")
+                if isinstance(rev, int):
+                    entry["_rev"] = rev
+                history.append(entry)
+            rev = item.get("revision_number")
+            if isinstance(rev, int):
+                max_rev = max(max_rev, rev)
+        if history:
+            history.sort(key=lambda x: x.get("_rev", 0))
+            for item in history:
+                item.pop("_rev", None)
+        if max_rev == 0 and history:
+            max_rev = len(history)
+        return history, max_rev
+
+    def _hydrate_question_from_logs(self, q_state: QuestionState, logs_dir: str) -> None:
+        strategy, hitl_rev = self._find_latest_agent7_output(logs_dir, q_state.question_id)
+        if strategy and (hitl_rev > 0 or not q_state.agent7_output):
+            q_state.agent7_output = strategy
+        if hitl_rev > 0 and q_state.revision_count < hitl_rev:
+            q_state.revision_count = hitl_rev
+        if not q_state.feedback_history:
+            history, max_rev = self._load_interaction_history(logs_dir, q_state.question_id)
+            hitl_history, hitl_max = self._load_hitl_feedback_history(logs_dir, q_state.question_id)
+            if history or hitl_history:
+                merged = []
+                seen = set()
+                for item in history + hitl_history:
+                    fb = (item.get("feedback") or "").strip()
+                    if not fb:
+                        continue
+                    if fb in seen:
+                        continue
+                    seen.add(fb)
+                    merged.append(item)
+                q_state.feedback_history = merged
+            if q_state.revision_count == 0:
+                q_state.revision_count = max(max_rev, hitl_max, len(q_state.feedback_history))
+        if q_state.is_satisfied:
+            q_state.status = ProcessStatus.COMPLETED
+        elif q_state.agent7_output:
+            q_state.status = ProcessStatus.WAITING_FEEDBACK
+
+    def _load_session_from_dir(self, session_id: str, session_dir: str) -> Optional[SessionState]:
+        if not os.path.isdir(session_dir):
+            return None
+
+        logs_dir = os.path.join(session_dir, "logs")
+        if not os.path.isdir(logs_dir):
+            logs_dir = session_dir
+        arxiv_papers_dir = os.path.join(session_dir, "arxiv_papers")
+        if not os.path.isdir(arxiv_papers_dir):
+            arxiv_papers_dir = session_dir
+
+        token_tracker.log_file = os.path.join(logs_dir, "token_usage.json")
+
+        summary_path = os.path.join(logs_dir, "session_summary.json")
+        summary_data = self._load_json_safe(summary_path) if os.path.exists(summary_path) else None
+
+        session = SessionState(
+            session_id=session_id,
+            session_dir=session_dir,
+            logs_dir=logs_dir,
+            arxiv_papers_dir=arxiv_papers_dir,
+            log_collector=LogCollector(),
+        )
+
+        paper_path = ""
+        review_path = ""
+        if summary_data:
+            paper_path = summary_data.get("paper_path", "")
+            review_path = summary_data.get("review_path", "")
+
+        session.paper_file_path = self._resolve_existing_path([
+            paper_path,
+            os.path.join(session_dir, "paper.md"),
+            os.path.join(session_dir, "paper.pdf"),
+        ])
+        session.review_file_path = self._resolve_existing_path([
+            review_path,
+            os.path.join(session_dir, "review.txt"),
+        ])
+
+        final_rebuttal_path = os.path.join(logs_dir, "final_rebuttal.txt")
+        if os.path.exists(final_rebuttal_path):
+            session.final_rebuttal = self._read_text_safe(final_rebuttal_path)
+
+        questions: List[QuestionState] = []
+        if summary_data and isinstance(summary_data.get("questions"), list):
+            for q in summary_data.get("questions", []):
+                q_state = QuestionState(
+                    question_id=int(q.get("question_id", 0) or 0),
+                    question_text=q.get("question_text", "") or "",
+                    revision_count=int(q.get("revision_count", 0) or 0),
+                    is_satisfied=bool(q.get("is_satisfied", False)),
+                )
+                q_state.agent7_output = q.get("final_strategy", "") or ""
+                q_state.feedback_history = q.get("feedback_history", []) or []
+                if q_state.question_id > 0:
+                    questions.append(q_state)
+
+            questions.sort(key=lambda x: x.question_id)
+
+        if not questions:
+            parsed_questions = self._parse_questions_from_logs(logs_dir)
+            if parsed_questions:
+                for idx, text in enumerate(parsed_questions, start=1):
+                    questions.append(QuestionState(question_id=idx, question_text=text))
+            else:
+                for qid in self._collect_question_ids_from_logs(logs_dir):
+                    questions.append(QuestionState(question_id=qid, question_text=f"Question {qid} (restored)"))
+
+        session.questions = questions
+        for q_state in session.questions:
+            self._hydrate_question_from_logs(q_state, logs_dir)
+
+        if session.final_rebuttal or (session.questions and all(q.is_satisfied for q in session.questions)):
+            session.overall_status = ProcessStatus.COMPLETED
+        elif any(q.agent7_output for q in session.questions):
+            session.overall_status = ProcessStatus.WAITING_FEEDBACK
+        elif session.questions:
+            session.overall_status = ProcessStatus.PROCESSING
+        else:
+            session.overall_status = ProcessStatus.NOT_STARTED
+
+        session.progress_message = "Restored from disk"
+        return session
+
+    def restore_session_from_disk(self, session_id: str) -> Optional[SessionState]:
+        with self._lock:
+            existing = self.sessions.get(session_id)
+        if existing:
+            return existing
+
+        session_dir = os.path.join(SESSIONS_BASE_DIR, session_id)
+        session = self._load_session_from_dir(session_id, session_dir)
+        if not session:
+            return None
+        with self._lock:
+            if session_id not in self.sessions:
+                self.sessions[session_id] = session
+        return session
+
+    def restore_sessions_from_disk(self) -> int:
+        restored = 0
+        try:
+            for entry in os.listdir(SESSIONS_BASE_DIR):
+                session_dir = os.path.join(SESSIONS_BASE_DIR, entry)
+                if not os.path.isdir(session_dir):
+                    continue
+                with self._lock:
+                    already_loaded = entry in self.sessions
+                if already_loaded:
+                    continue
+                session = self._load_session_from_dir(entry, session_dir)
+                if session:
+                    with self._lock:
+                        if entry not in self.sessions:
+                            self.sessions[entry] = session
+                            restored += 1
+        except Exception as e:
+            print(f"[ERROR] Failed to restore sessions from disk: {e}")
+        return restored
     
     def _get_session_log_dir(self, session_id: str) -> str:
         session = self.get_session(session_id)
@@ -858,6 +1149,8 @@ class RebuttalService:
         return self.sessions.get(session_id)
     
     def list_active_sessions(self) -> List[Dict]:
+
+        self.restore_sessions_from_disk()
 
         sessions_info = []
         with self._lock:
