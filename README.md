@@ -1,3 +1,5 @@
+<div align="center">
+
 <h2><span style="color:#FFFFFF;">RebuttalAgent: AI-Powered Academic Paper Rebuttal Assistant</span></h2>
 
 <p align="center">
@@ -8,8 +10,14 @@
 </p >
 
 
-
 <strong>Accepted by ACL 2026 main conference</strong>
+
+
+</div>
+
+
+
+
 
 
 <p align="center">
