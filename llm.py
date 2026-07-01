@@ -11,6 +11,11 @@ PROVIDER_CONFIGS: Dict[str, Dict[str, str]] = {
         "env_var": "OPENROUTER_API_KEY",
         "base_url_env_var": "OPENROUTER_API_BASE_URL",
     },
+    "requesty": {
+        "base_url": "https://router.requesty.ai/v1",
+        "env_var": "REQUESTY_API_KEY",
+        "base_url_env_var": "REQUESTY_API_BASE_URL",
+    },
     "qwen": {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "env_var": "QWEN_API_KEY",
@@ -136,9 +141,9 @@ class LLMClient:
             
             self._genai = None
             
-            # Set up headers (OpenRouter needs special headers)
+            # Set up headers (OpenRouter/Requesty support optional attribution headers)
             extra_headers = {}
-            if self.provider == "openrouter":
+            if self.provider in ("openrouter", "requesty"):
                 extra_headers = {
                     "HTTP-Referer": site_url or "http://localhost",
                     "X-Title": site_name or "Rebuttal Assistant",

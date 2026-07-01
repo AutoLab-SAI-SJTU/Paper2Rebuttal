@@ -92,6 +92,9 @@ Then edit `.env` and add your API key:
 # OpenRouter (supports many models)
 OPENROUTER_API_KEY=<your_openrouter_api_key>
 
+# Requesty (OpenAI-compatible router, supports many models)
+REQUESTY_API_KEY=<your_requesty_api_key>
+
 # Qwen (Alibaba DashScope)
 QWEN_API_KEY=<your_qwen_api_key>
 
