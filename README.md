@@ -173,14 +173,12 @@ The system uses a multi-agent pipeline:
 If you find RebuttalAgent useful for your research, please consider citing:
 
 ```bibtex
-@misc{ma2026paper2rebuttal,
-      title={Paper2Rebuttal: A Multi-Agent Framework for Transparent Author Response Assistance}, 
-      author={Qianli Ma and Chang Guo and Zhiheng Tian and Siyu Wang and Jipeng Xiao and Yuanhao Yue and Zhipeng Zhang},
-      year={2026},
-      eprint={2601.14171},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2601.14171}, 
+@inproceedings{ma2026paper2rebuttal,
+  title={Paper2rebuttal: A multi-agent framework for transparent author response assistance},
+  author={Ma, Qianli and Guo, Chang and Tian, Zhiheng and Wang, Siyu and Xiao, Jipeng and Yue, Yuanhao and Zhang, Zhipeng},
+  booktitle={Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages={46134--46166},
+  year={2026}
 }
 ```
 
