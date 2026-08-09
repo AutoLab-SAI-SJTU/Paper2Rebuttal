@@ -123,6 +123,12 @@ PROVIDER_CONFIGS = {
         "label": "OpenRouter API Key",
         "placeholder": "sk-or-v1-...",
     },
+    "Requesty": {
+        "provider_key": "requesty",
+        "env_var": "REQUESTY_API_KEY",
+        "label": "Requesty API Key",
+        "placeholder": "sk-...",
+    },
     "Qwen (DashScope)": {
         "provider_key": "qwen",
         "env_var": "QWEN_API_KEY",
@@ -162,6 +168,10 @@ MODEL_CHOICES_BY_PROVIDER = {
         "Grok 4.1 Fast": "x-ai/grok-4.1-fast",
         "GPT-5 Mini": "openai/gpt-5-mini",
         "DeepSeek V3.2": "deepseek/deepseek-chat-v3.2",
+        "Other models": "custom",
+    },
+    "Requesty": {
+        "GPT-4o Mini": "openai/gpt-4o-mini",
         "Other models": "custom",
     },
     "Qwen (DashScope)": {
